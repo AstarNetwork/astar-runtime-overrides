@@ -7,7 +7,7 @@
 use codec::{Decode, Encode};
 use frame_support::{
     construct_runtime, parameter_types,
-    traits::{Contains, Currency, FindAuthor, Get, Imbalance, OnRuntimeUpgrade, OnUnbalanced},
+    traits::{Contains, Currency, FindAuthor, Get, Imbalance, OnUnbalanced},
     weights::{
         constants::{BlockExecutionWeight, ExtrinsicBaseWeight, RocksDbWeight, WEIGHT_PER_SECOND},
         ConstantMultiplier, DispatchClass, Weight, WeightToFeeCoefficient, WeightToFeeCoefficients,
@@ -28,7 +28,7 @@ use sp_runtime::{
     create_runtime_str, generic, impl_opaque_keys,
     traits::{
         AccountIdConversion, AccountIdLookup, BlakeTwo256, Block as BlockT, ConvertInto,
-        DispatchInfoOf, Dispatchable, OpaqueKeys, PostDispatchInfoOf, Verify,
+        Dispatchable, OpaqueKeys, PostDispatchInfoOf, Verify,
     },
     transaction_validity::{
         TransactionPriority, TransactionSource, TransactionValidity, TransactionValidityError,
@@ -36,9 +36,6 @@ use sp_runtime::{
     ApplyExtrinsicResult, FixedPointNumber, Perbill, Permill, Perquintill, RuntimeDebug,
 };
 use sp_std::prelude::*;
-
-use pallet_evm_precompile_assets_erc20::AddressToAssetId;
-use xcm_primitives::AssetLocationIdConverter;
 
 #[cfg(any(feature = "std", test))]
 use sp_version::NativeVersion;
@@ -49,13 +46,11 @@ pub use sp_consensus_aura::sr25519::AuthorityId as AuraId;
 pub use sp_runtime::BuildStorage;
 
 mod precompiles;
+pub use precompiles::{AstarNetworkPrecompiles, ASSET_PRECOMPILE_ADDRESS_PREFIX};
+pub type Precompiles = AstarNetworkPrecompiles<Runtime>;
+
 mod weights;
 mod xcm_config;
-
-pub type AstarAssetLocationIdConverter = AssetLocationIdConverter<AssetId, XcAssetConfig>;
-
-pub use precompiles::{AstarNetworkPrecompiles, ASSET_PRECOMPILE_ADDRESS_PREFIX};
-pub type Precompiles = AstarNetworkPrecompiles<Runtime, AstarAssetLocationIdConverter>;
 
 /// Constant values used within the runtime.
 pub const MILLIASTR: Balance = 1_000_000_000_000_000;
@@ -93,7 +88,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: create_runtime_str!("astar"),
     impl_name: create_runtime_str!("astar"),
     authoring_version: 1,
-    spec_version: 23,
+    spec_version: 17,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     transaction_version: 2,
@@ -322,7 +317,7 @@ impl<AccountId> Default for SmartContract<AccountId> {
 }
 
 #[cfg(not(feature = "runtime-benchmarks"))]
-impl<AccountId> pallet_dapps_staking::IsContract for SmartContract<AccountId> {
+impl<AccountId> pallet_dapps_staking::traits::IsContract for SmartContract<AccountId> {
     fn is_valid(&self) -> bool {
         match self {
             SmartContract::Wasm(_account) => false,
@@ -332,7 +327,7 @@ impl<AccountId> pallet_dapps_staking::IsContract for SmartContract<AccountId> {
 }
 
 #[cfg(feature = "runtime-benchmarks")]
-impl<AccountId> pallet_dapps_staking::IsContract for SmartContract<AccountId> {
+impl<AccountId> pallet_dapps_staking::traits::IsContract for SmartContract<AccountId> {
     fn is_valid(&self) -> bool {
         match self {
             SmartContract::Wasm(_account) => false,
@@ -439,7 +434,7 @@ type NegativeImbalance = <Balances as Currency<AccountId>>::NegativeImbalance;
 pub struct ToStakingPot;
 impl OnUnbalanced<NegativeImbalance> for ToStakingPot {
     fn on_nonzero_unbalanced(amount: NegativeImbalance) {
-        let staking_pot = PotId::get().into_account_truncating();
+        let staking_pot = PotId::get().into_account();
         Balances::resolve_creating(&staking_pot, amount);
     }
 }
@@ -454,7 +449,7 @@ impl Get<Balance> for DappsStakingTvlProvider {
 pub struct BeneficiaryPayout();
 impl pallet_block_reward::BeneficiaryPayout<NegativeImbalance> for BeneficiaryPayout {
     fn treasury(reward: NegativeImbalance) {
-        Balances::resolve_creating(&TreasuryPalletId::get().into_account_truncating(), reward);
+        Balances::resolve_creating(&TreasuryPalletId::get().into_account(), reward);
     }
 
     fn collators(reward: NegativeImbalance) {
@@ -506,7 +501,7 @@ impl pallet_balances::Config for Runtime {
 /// 2^128-1         Relay chain token (KSM)
 pub type AssetId = u128;
 
-impl AddressToAssetId<AssetId> for Runtime {
+impl pallet_evm_precompile_assets_erc20::AddressToAssetId<AssetId> for Runtime {
     fn address_to_asset_id(address: H160) -> Option<AssetId> {
         let mut data = [0u8; 16];
         let address_bytes: [u8; 20] = address.into();
@@ -672,6 +667,13 @@ impl pallet_evm::GasWeightMapping for GasWeightMapping {
     }
 }
 
+pub struct FixedGasPrice;
+impl FeeCalculator for FixedGasPrice {
+    fn min_gas_price() -> U256 {
+        (MILLIASTR / 1_000_000).into()
+    }
+}
+
 pub struct FindAuthorTruncated<F>(sp_std::marker::PhantomData<F>);
 impl<F: FindAuthor<u32>> FindAuthor<H160> for FindAuthorTruncated<F> {
     fn find_author<'a, I>(digests: I) -> Option<H160>
@@ -698,11 +700,11 @@ parameter_types! {
     pub BlockGasLimit: U256 = U256::from(
         NORMAL_DISPATCH_RATIO * MAXIMUM_BLOCK_WEIGHT / WEIGHT_PER_GAS
     );
-    pub PrecompilesValue: Precompiles = AstarNetworkPrecompiles::<_, _>::new();
+    pub PrecompilesValue: Precompiles = AstarNetworkPrecompiles::<_>::new();
 }
 
 impl pallet_evm::Config for Runtime {
-    type FeeCalculator = BaseFee;
+    type FeeCalculator = FixedGasPrice;
     type GasWeightMapping = GasWeightMapping;
     type BlockHashMapping = pallet_ethereum::EthereumBlockHashMapping<Runtime>;
     type CallOrigin = pallet_evm::EnsureAddressRoot<AccountId>;
@@ -717,6 +719,7 @@ impl pallet_evm::Config for Runtime {
     type OnChargeTransaction = pallet_evm::EVMCurrencyAdapter<Balances, ToStakingPot>;
     type BlockGasLimit = BlockGasLimit;
     type FindAuthor = FindAuthorTruncated<Aura>;
+    type WeightInfo = pallet_evm::weights::SubstrateWeight<Runtime>;
 }
 
 impl pallet_ethereum::Config for Runtime {
@@ -727,26 +730,6 @@ impl pallet_ethereum::Config for Runtime {
 impl pallet_sudo::Config for Runtime {
     type Event = Event;
     type Call = Call;
-}
-
-pub struct EvmRevertCodeHandler;
-impl pallet_xc_asset_config::XcAssetChanged<Runtime> for EvmRevertCodeHandler {
-    fn xc_asset_registered(asset_id: AssetId) {
-        let address = Runtime::asset_id_to_address(asset_id);
-        pallet_evm::AccountCodes::<Runtime>::insert(address, vec![0x60, 0x00, 0x60, 0x00, 0xfd]);
-    }
-
-    fn xc_asset_unregistered(asset_id: AssetId) {
-        let address = Runtime::asset_id_to_address(asset_id);
-        pallet_evm::AccountCodes::<Runtime>::remove(address);
-    }
-}
-
-impl pallet_xc_asset_config::Config for Runtime {
-    type Event = Event;
-    type AssetId = AssetId;
-    type XcAssetChanged = EvmRevertCodeHandler;
-    type WeightInfo = weights::pallet_xc_asset_config::WeightInfo<Self>;
 }
 
 construct_runtime!(
@@ -778,10 +761,9 @@ construct_runtime!(
         AuraExt: cumulus_pallet_aura_ext::{Pallet, Storage, Config} = 44,
 
         XcmpQueue: cumulus_pallet_xcmp_queue::{Pallet, Call, Storage, Event<T>} = 50,
-        PolkadotXcm: pallet_xcm::{Pallet, Call, Storage, Event<T>, Origin, Config} = 51,
+        PolkadotXcm: pallet_xcm::{Pallet, Call, Storage, Event<T>, Origin} = 51,
         CumulusXcm: cumulus_pallet_xcm::{Pallet, Event<T>, Origin} = 52,
         DmpQueue: cumulus_pallet_dmp_queue::{Pallet, Call, Storage, Event<T>} = 53,
-        XcAssetConfig: pallet_xc_asset_config::{Pallet, Call, Storage, Event<T>} = 54,
 
         EVM: pallet_evm::{Pallet, Config, Call, Storage, Event<T>} = 60,
         Ethereum: pallet_ethereum::{Pallet, Call, Storage, Event, Origin, Config} = 61,
@@ -839,37 +821,7 @@ pub type Executive = frame_executive::Executive<
     frame_system::ChainContext<Runtime>,
     Runtime,
     AllPalletsWithSystem,
-    (RelayAssetRegistration,),
 >;
-
-pub struct RelayAssetRegistration;
-impl OnRuntimeUpgrade for RelayAssetRegistration {
-    fn on_runtime_upgrade() -> Weight {
-        use pallet_xc_asset_config::*;
-        use xcm::latest::prelude::*;
-
-        let relay_asset_id = u128::max_value();
-        let relay_asset_multilocation = MultiLocation::parent();
-
-        AssetIdToLocation::<Runtime>::insert(
-            relay_asset_id,
-            relay_asset_multilocation.clone().versioned(),
-        );
-        AssetLocationToId::<Runtime>::insert(
-            relay_asset_multilocation.clone().versioned(),
-            relay_asset_id,
-        );
-
-        AssetLocationUnitsPerSecond::<Runtime>::insert(
-            relay_asset_multilocation.clone().versioned(),
-            1_000_000_000,
-        );
-
-        EvmRevertCodeHandler::xc_asset_registered(relay_asset_id);
-
-        <Runtime as frame_system::Config>::DbWeight::get().writes(4)
-    }
-}
 
 impl fp_self_contained::SelfContainedCall for Call {
     type SignedInfo = H160;
@@ -888,14 +840,9 @@ impl fp_self_contained::SelfContainedCall for Call {
         }
     }
 
-    fn validate_self_contained(
-        &self,
-        info: &Self::SignedInfo,
-        dispatch_info: &DispatchInfoOf<Call>,
-        len: usize,
-    ) -> Option<TransactionValidity> {
+    fn validate_self_contained(&self, info: &Self::SignedInfo) -> Option<TransactionValidity> {
         match self {
-            Call::Ethereum(call) => call.validate_self_contained(info, dispatch_info, len),
+            Call::Ethereum(call) => call.validate_self_contained(info),
             _ => None,
         }
     }
@@ -1030,13 +977,11 @@ impl_runtime_apis! {
         }
 
         fn account_basic(address: H160) -> pallet_evm::Account {
-            let (account, _) = EVM::account_basic(&address);
-            account
+            EVM::account_basic(&address)
         }
 
         fn gas_price() -> U256 {
-            let (gas_price, _) = <Runtime as pallet_evm::Config>::FeeCalculator::min_gas_price();
-            gas_price
+            <Runtime as pallet_evm::Config>::FeeCalculator::min_gas_price()
         }
 
         fn account_code_at(address: H160) -> Vec<u8> {
@@ -1089,7 +1034,7 @@ impl_runtime_apis! {
                     .as_ref()
                     .unwrap_or_else(|| <Runtime as pallet_evm::Config>::config()),
             )
-            .map_err(|err| err.error.into())
+            .map_err(|err| err.into())
         }
 
         fn create(
@@ -1127,7 +1072,7 @@ impl_runtime_apis! {
                     .as_ref()
                     .unwrap_or(<Runtime as pallet_evm::Config>::config()),
                 )
-                .map_err(|err| err.error.into())
+                .map_err(|err| err.into())
         }
 
         fn current_transaction_statuses() -> Option<Vec<fp_rpc::TransactionStatus>> {
@@ -1191,7 +1136,6 @@ impl_runtime_apis! {
 
             list_benchmark!(list, extra, pallet_dapps_staking, DappsStaking);
             list_benchmark!(list, extra, pallet_block_reward, BlockReward);
-            list_benchmark!(list, extra, pallet_xc_asset_config, XcAssetConfig);
 
             let storage_info = AllPalletsWithSystem::storage_info();
 
@@ -1225,7 +1169,6 @@ impl_runtime_apis! {
             add_benchmark!(params, batches, pallet_timestamp, Timestamp);
             add_benchmark!(params, batches, pallet_dapps_staking, DappsStaking);
             add_benchmark!(params, batches, pallet_block_reward, BlockReward);
-            add_benchmark!(params, batches, pallet_xc_asset_config, XcAssetConfig);
 
             if batches.is_empty() { return Err("Benchmark not found for this pallet.".into()) }
             Ok(batches)

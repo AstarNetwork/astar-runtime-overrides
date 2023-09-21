@@ -1,3 +1,5 @@
+cargo-features = ["workspace-inheritance"]
+
 [package]
 name = "astar-runtime"
 version = "4.7.0"
@@ -99,6 +101,12 @@ pallet-evm-precompile-xcm = { git = "https://github.com/AstarNetwork/astar-frame
 pallet-xc-asset-config = { git = "https://github.com/AstarNetwork/astar-frame", branch = "polkadot-v0.9.24", default-features = false }
 xcm-primitives = { git = "https://github.com/AstarNetwork/astar-frame", branch = "polkadot-v0.9.24", default-features = false }
 
+# EVM tracing
+evm-tracing-events = { workspace = true }
+moonbeam-evm-tracer = { workspace = true }
+moonbeam-rpc-primitives-debug = { workspace = true }
+moonbeam-rpc-primitives-txpool = { workspace = true }
+
 [build-dependencies]
 substrate-wasm-builder = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.24" }
 
@@ -176,6 +184,10 @@ std = [
     "xcm-executor/std",
     "pallet-xc-asset-config/std",
     "xcm-primitives/std",
+
+    "moonbeam-evm-tracer/std",
+	"moonbeam-rpc-primitives-debug/std",
+	"moonbeam-rpc-primitives-txpool/std",
 ]
 runtime-benchmarks = [
     'frame-benchmarking',

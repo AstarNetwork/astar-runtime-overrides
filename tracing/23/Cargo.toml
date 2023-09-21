@@ -12,9 +12,6 @@ members = [
 # Astar runtime requires unwinding.
 panic = "unwind"
 
-[patch."https://github.com/AstarNetwork/frontier"]
-
-
 [workspace.dependencies]
 # third-party dependencies
 codec = { package = "parity-scale-codec", version = "3.0.0", default-features = false, features = ["derive"] }
@@ -131,5 +128,5 @@ evm-gasometer = { version = "0.35.0", default-features = false }
 ethereum = { version = "0.12.0", default-features = false }
 ethereum-types = { version = "0.13.1", default-features = false }
 
-fp-evm = { git = "https://github.com/AstarNetwork/frontier", rev = "7c42952c277c998a46b4758607deb3102b7be8d6", default-features = false }
+fp-evm = { git="https://github.com/AstarNetwork/frontier", branch="polkadot-v0.9.24", default-features=false }
 sp-externalities = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.24", default-features = false }
