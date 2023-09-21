@@ -1057,6 +1057,97 @@ impl_runtime_apis! {
             Ok(batches)
         }
     }
+
+    impl moonbeam_rpc_primitives_debug::DebugRuntimeApi<Block> for Runtime {
+        fn trace_transaction(
+            extrinsics: Vec<<Block as BlockT>::Extrinsic>,
+            traced_transaction: &ethereum::TransactionV2,
+        ) -> Result<
+            (),
+            sp_runtime::DispatchError,
+        > {
+            use moonbeam_evm_tracer::tracer::EvmTracer;
+
+            // Apply the a subset of extrinsics: all the substrate-specific or ethereum
+            // transactions that preceded the requested transaction.
+            for ext in extrinsics.into_iter() {
+                let _ = match &ext.0.function {
+                    Call::Ethereum(pallet_ethereum::Call::transact { transaction }) => {
+                        if ethereum::TransactionV2::Legacy(transaction.clone()) == traced_transaction.clone() {
+                            EvmTracer::new().trace(|| Executive::apply_extrinsic(ext));
+                            return Ok(());
+                        } else {
+                            Executive::apply_extrinsic(ext)
+                        }
+                    }
+                    _ => Executive::apply_extrinsic(ext),
+                };
+            }
+            Err(sp_runtime::DispatchError::Other(
+                "Failed to find Ethereum transaction among the extrinsics.",
+            ))
+        }
+
+        fn trace_block(
+            extrinsics: Vec<<Block as BlockT>::Extrinsic>,
+            known_transactions: Vec<H256>,
+        ) -> Result<
+            (),
+            sp_runtime::DispatchError,
+        > {
+            use moonbeam_evm_tracer::tracer::EvmTracer;
+
+            let mut config = <Runtime as pallet_evm::Config>::config().clone();
+            config.estimate = true;
+
+            // Apply all extrinsics. Ethereum extrinsics are traced.
+            for ext in extrinsics.into_iter() {
+                match &ext.0.function {
+                    Call::Ethereum(pallet_ethereum::Call::transact { transaction }) => {
+                        let tx_hash = <ethereum::LegacyTransactionMessage>::from(transaction.clone()).hash();
+                        if known_transactions.contains(&tx_hash) {
+                            // Each known extrinsic is a new call stack.
+                            EvmTracer::emit_new();
+                            EvmTracer::new().trace(|| Executive::apply_extrinsic(ext));
+                        } else {
+                            let _ = Executive::apply_extrinsic(ext);
+                        }
+                    }
+                    _ => {
+                        let _ = Executive::apply_extrinsic(ext);
+                    }
+                };
+            }
+
+            Ok(())
+        }
+    }
+
+    impl moonbeam_rpc_primitives_txpool::TxPoolRuntimeApi<Block> for Runtime {
+        fn extrinsic_filter(
+            xts_ready: Vec<<Block as BlockT>::Extrinsic>,
+            xts_future: Vec<<Block as BlockT>::Extrinsic>,
+        ) -> moonbeam_rpc_primitives_txpool::TxPoolResponse {
+            moonbeam_rpc_primitives_txpool::TxPoolResponse {
+                ready: xts_ready
+                    .into_iter()
+                    .filter_map(|xt| match xt.0.function {
+                        Call::Ethereum(pallet_ethereum::Call::transact { transaction }) =>
+                            Some(ethereum::TransactionV2::Legacy(transaction)),
+                        _ => None,
+                    })
+                    .collect(),
+                future: xts_future
+                    .into_iter()
+                    .filter_map(|xt| match xt.0.function {
+                        Call::Ethereum(pallet_ethereum::Call::transact { transaction }) =>
+                            Some(ethereum::TransactionV2::Legacy(transaction)),
+                        _ => None,
+                    })
+                    .collect(),
+            }
+        }
+    }
 }
 
 struct CheckInherents;
